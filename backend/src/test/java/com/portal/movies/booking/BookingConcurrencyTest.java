@@ -1,5 +1,6 @@
 package com.portal.movies.booking;
 
+import com.portal.movies.catalog.DemoScheduleSeeder;
 import com.portal.movies.domain.AppUser;
 import com.portal.movies.domain.Movie;
 import com.portal.movies.domain.MovieShowtime;
@@ -11,6 +12,7 @@ import com.portal.movies.repository.ShowSeatRepository;
 import com.portal.movies.web.ApiException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -26,6 +28,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -50,20 +53,33 @@ class BookingConcurrencyTest {
     @Autowired MovieRepository movies;
     @Autowired MovieShowtimeRepository showtimes;
     @Autowired ShowSeatRepository seats;
+    @Autowired DemoScheduleSeeder demoScheduleSeeder;
 
     @Test
     void rollingDemoScheduleCreatesFutureShowtimesBeyondTheInitialMigrationWindow() {
+        // Invoke the seeder explicitly so the test verifies its behavior even if startup runners
+        // are not executed by a particular Spring test bootstrap.
+        demoScheduleSeeder.run(new DefaultApplicationArguments());
+
         Movie demoMovie = movies.findAllByOrderByTitleAsc().stream()
                 .filter(movie -> movie.getTitle().equals("The Last Horizon"))
                 .findFirst().orElseThrow();
         LocalDateTime scheduledStart = LocalDate.now(ZoneId.of("Asia/Kolkata"))
                 .plusDays(14).atTime(20, 45);
 
-        MovieShowtime futureShow = showtimes
-                .findByMovie_IdAndStartsAtAfterOrderByStartsAtAsc(demoMovie.getId(), scheduledStart.minusSeconds(1))
-                .stream()
+        // Read all rows for this movie and compare in Java. Avoid a database range predicate here,
+        // since date/time parameter binding differs between JDBC and JPA for DATETIME columns.
+        List<MovieShowtime> movieShowtimes = showtimes.findAll().stream()
+                .filter(show -> demoMovie.getId().equals(show.getMovie().getId()))
+                .toList();
+        MovieShowtime futureShow = movieShowtimes.stream()
                 .filter(show -> show.getStartsAt().equals(scheduledStart))
-                .findFirst().orElseThrow(() -> new AssertionError("Rolling schedule should create a showtime 14 days ahead"));
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "Rolling schedule should create a showtime at " + scheduledStart
+                                + "; showtimes returned by JPA: "
+                                + movieShowtimes.stream().map(show -> show.getStartsAt().toString())
+                                        .sorted().collect(Collectors.joining(", "))));
 
         assertEquals(80, seats.findByShowtime_IdOrderByRowLabelAscSeatNumberAsc(futureShow.getId()).size(),
                 "each new demo showtime should receive its 80-seat map");
