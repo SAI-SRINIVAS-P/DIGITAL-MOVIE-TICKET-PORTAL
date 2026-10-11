@@ -2,7 +2,6 @@
 
 ![Animated theater marquee: Digital Movie Ticket Portal](docs/media/theater-marquee.svg)
 
-# 🎬 Digital Movie Ticket Portal
 
 ### A cinematic full-stack movie booking experience
 
